@@ -35,11 +35,12 @@ interface RigState {
   updatePosition: (id: string, x: number, y: number) => void;
   setPowerSupply: (ps: PowerSupply) => void;
   calculatePower: () => Promise<void>;
+  // ДОБАВЛЕНО: Функция для получения координат соединений
+  getConnections: () => { from: { x: number, y: number }, to: { x: number, y: number }, type: 'input' | 'patch' | 'output' }[];
 }
 
 export const useRigStore = create<RigState>((set, get) => ({
   selectedPedals: [],
-  // Установим стандартный БП на 500mA по умолчанию
   selectedPowerSupply: { id: 'default', name: 'Standard 9V Adapter', max_ma: 500 },
   powerStatus: null,
 
@@ -90,4 +91,46 @@ export const useRigStore = create<RigState>((set, get) => ({
       console.error("Engineering check failed:", error);
     }
   },
+
+  // ДОБАВЛЕНО: Логика расчета соединений
+  getConnections: () => {
+    const { selectedPedals } = get();
+    if (selectedPedals.length === 0) return [];
+
+    const connections: any[] = [];
+    const PEDAL_WIDTH = 128; // Твой w-32 из PedalItem
+    const PEDAL_HEIGHT = 176; // Твой h-44 из PedalItem
+
+    selectedPedals.forEach((pedal, index) => {
+      // 1. Входной провод (от левого края до первой педали)
+      if (index === 0) {
+        connections.push({
+          from: { x: 0, y: pedal.position.y + PEDAL_HEIGHT / 2 },
+          to: { x: pedal.position.x, y: pedal.position.y + PEDAL_HEIGHT / 2 },
+          type: 'input'
+        });
+      }
+
+      // 2. Межпедальные провода (Patch cables)
+      if (index < selectedPedals.length - 1) {
+        const nextPedal = selectedPedals[index + 1];
+        connections.push({
+          from: { x: pedal.position.x + PEDAL_WIDTH, y: pedal.position.y + PEDAL_HEIGHT / 2 },
+          to: { x: nextPedal.position.x, y: nextPedal.position.y + PEDAL_HEIGHT / 2 },
+          type: 'patch'
+        });
+      }
+
+      // 3. Выходной провод (от последней педали до правого края)
+      if (index === selectedPedals.length - 1) {
+        connections.push({
+          from: { x: pedal.position.x + PEDAL_WIDTH, y: pedal.position.y + PEDAL_HEIGHT / 2 },
+          to: { x: 2000, y: pedal.position.y + PEDAL_HEIGHT / 2 }, // Запас по ширине
+          type: 'output'
+        });
+      }
+    });
+
+    return connections;
+  }
 }));
