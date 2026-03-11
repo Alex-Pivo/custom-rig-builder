@@ -12,8 +12,8 @@ import {
   KeyboardSensor,
   DragOverlay,
 } from "@dnd-kit/core";
-// Добавляем модификатор для привязки к курсору
-import { snapCenterToCursor } from "@dnd-kit/modifiers";
+// snapCenterToCursor для центрирования, restrictToParentElement для границ
+import { snapCenterToCursor, restrictToParentElement } from "@dnd-kit/modifiers";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useRigStore } from "@/store/useRigStore";
 import { PedalItem } from "./Pedaltem";
@@ -62,8 +62,10 @@ export const Board = () => {
     if (active) {
       const pedal = selectedPedals.find((p) => p.id === active.id);
       if (pedal) {
-        const newX = pedal.position.x + delta.x;
-        const newY = pedal.position.y + delta.y;
+        // Ограничиваем координаты при сохранении, чтобы педаль не сохранялась за краем
+        // (Ширина контейнера 1024 - ширина педали 128, Высота 600 - высота педали 176)
+        const newX = Math.max(0, Math.min(pedal.position.x + delta.x, 1024 - 128));
+        const newY = Math.max(0, Math.min(pedal.position.y + delta.y, 600 - 176));
         updatePosition(active.id.toString(), newX, newY);
       }
     }
@@ -148,8 +150,8 @@ export const Board = () => {
             />
           ))}
 
-          {/* Исправленный оверлей: используем модификатор центрирования */}
-          <DragOverlay modifiers={[snapCenterToCursor]} dropAnimation={null}>
+          {/* Оверлей теперь ограничен родителем (Board) */}
+          <DragOverlay modifiers={[snapCenterToCursor, restrictToParentElement]} dropAnimation={null}>
             {activeId && activePedal ? (
               <PedalItem
                 id={activeId}

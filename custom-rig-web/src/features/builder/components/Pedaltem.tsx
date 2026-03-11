@@ -36,7 +36,7 @@ export const PedalItem = ({
     });
 
   const style: React.CSSProperties = {
-    // Для оверлея dnd-kit сам рассчитает transform с учетом snapCenterToCursor
+    // ВАЖНО: snapCenterToCursor работает правильно только когда мы используем transform
     transform: CSS.Translate.toString(transform),
     top: isOverlay ? 0 : `${position.y}px`,
     left: isOverlay ? 0 : `${position.x}px`,
@@ -45,7 +45,7 @@ export const PedalItem = ({
         ? "none"
         : "transform 0.2s ease, opacity 0.2s ease",
     zIndex: isOverlay ? 1000 : isDragging ? 0 : 10,
-    position: "absolute", // Всегда absolute внутри родительского Board
+    position: "absolute",
     display: isHidden ? "none" : "flex",
     pointerEvents: isOverlay ? "none" : "auto",
   };
