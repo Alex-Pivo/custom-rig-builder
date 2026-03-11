@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 
 // Структура педали
 export interface Pedal {
@@ -26,23 +26,49 @@ interface PowerStatus {
   recommendation: string;
 }
 
+// Структура ручного соединения
+export interface ManualConnection {
+  id: string;
+  fromPedalId: string;
+  toPedalId: string;
+}
+
 interface RigState {
   selectedPedals: Pedal[];
   selectedPowerSupply: PowerSupply | null;
   powerStatus: PowerStatus | null;
+  manualConnections: ManualConnection[];
+
   addPedal: (pedal: Pedal) => void;
   removePedal: (id: string) => void;
   updatePosition: (id: string, x: number, y: number) => void;
   setPowerSupply: (ps: PowerSupply) => void;
   calculatePower: () => Promise<void>;
-  // ДОБАВЛЕНО: Функция для получения координат соединений
-  getConnections: () => { from: { x: number, y: number }, to: { x: number, y: number }, type: 'input' | 'patch' | 'output' }[];
+
+  addConnection: (fromId: string, toId: string) => void;
+  removeConnection: (id: string) => void;
+  // НОВОЕ: Удаление по паре ID (удобно для контекстного меню кабеля)
+  removeManualConnection: (fromId: string, toId: string) => void;
+
+  getConnections: () => {
+    id: string;
+    from: { x: number; y: number };
+    to: { x: number; y: number };
+    fromPedalId: string;
+    toPedalId: string;
+    type: "manual";
+  }[];
 }
 
 export const useRigStore = create<RigState>((set, get) => ({
   selectedPedals: [],
-  selectedPowerSupply: { id: 'default', name: 'Standard 9V Adapter', max_ma: 500 },
+  selectedPowerSupply: {
+    id: "default",
+    name: "Standard 9V Adapter",
+    max_ma: 500,
+  },
   powerStatus: null,
+  manualConnections: [],
 
   addPedal: (pedal) => {
     set((state) => ({ selectedPedals: [...state.selectedPedals, pedal] }));
@@ -50,41 +76,77 @@ export const useRigStore = create<RigState>((set, get) => ({
   },
 
   removePedal: (id) => {
-    set((state) => ({ selectedPedals: state.selectedPedals.filter((p) => p.id !== id) }));
+    set((state) => ({
+      selectedPedals: state.selectedPedals.filter((p) => p.id !== id),
+      manualConnections: state.manualConnections.filter(
+        (c) => c.fromPedalId !== id && c.toPedalId !== id,
+      ),
+    }));
     get().calculatePower();
   },
 
-  updatePosition: (id, x, y) => set((state) => ({
-    selectedPedals: state.selectedPedals.map((p) => 
-      p.id === id ? { ...p, position: { x, y } } : p
-    )
-  })),
+  updatePosition: (id, x, y) =>
+    set((state) => ({
+      selectedPedals: state.selectedPedals.map((p) =>
+        p.id === id ? { ...p, position: { x, y } } : p,
+      ),
+    })),
 
   setPowerSupply: (ps) => {
     set({ selectedPowerSupply: ps });
     get().calculatePower();
   },
 
+  addConnection: (fromId, toId) => {
+    if (fromId === toId) return;
+
+    set((state) => {
+      const exists = state.manualConnections.some(
+        (c) => c.fromPedalId === fromId && c.toPedalId === toId,
+      );
+      if (exists) return state;
+
+      const newConn: ManualConnection = {
+        id: `${fromId}-${toId}`,
+        fromPedalId: fromId,
+        toPedalId: toId,
+      };
+
+      return { manualConnections: [...state.manualConnections, newConn] };
+    });
+  },
+
+  removeConnection: (id) =>
+    set((state) => ({
+      manualConnections: state.manualConnections.filter((c) => c.id !== id),
+    })),
+
+  // НОВОЕ: Реализация удаления по паре ID
+  removeManualConnection: (fromId, toId) =>
+    set((state) => ({
+      manualConnections: state.manualConnections.filter(
+        (c) => !(c.fromPedalId === fromId && c.toPedalId === toId),
+      ),
+    })),
+
   calculatePower: async () => {
     const { selectedPedals, selectedPowerSupply } = get();
-
     if (selectedPedals.length === 0) {
       set({ powerStatus: null });
       return;
     }
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/calculate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("http://127.0.0.1:8000/calculate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pedals: selectedPedals,
-          power_supply: selectedPowerSupply
+          power_supply: selectedPowerSupply,
         }),
       });
 
-      if (!response.ok) throw new Error('API Error');
-
+      if (!response.ok) throw new Error("API Error");
       const data = await response.json();
       set({ powerStatus: data });
     } catch (error) {
@@ -92,45 +154,39 @@ export const useRigStore = create<RigState>((set, get) => ({
     }
   },
 
-  // ДОБАВЛЕНО: Логика расчета соединений
   getConnections: () => {
-    const { selectedPedals } = get();
+    const { selectedPedals, manualConnections } = get();
     if (selectedPedals.length === 0) return [];
 
     const connections: any[] = [];
-    const PEDAL_WIDTH = 128; // Твой w-32 из PedalItem
-    const PEDAL_HEIGHT = 176; // Твой h-44 из PedalItem
 
-    selectedPedals.forEach((pedal, index) => {
-      // 1. Входной провод (от левого края до первой педали)
-      if (index === 0) {
-        connections.push({
-          from: { x: 0, y: pedal.position.y + PEDAL_HEIGHT / 2 },
-          to: { x: pedal.position.x, y: pedal.position.y + PEDAL_HEIGHT / 2 },
-          type: 'input'
-        });
-      }
+    // Смещения для портов
+    const PORT_Y_OFFSET = 152;
+    const INPUT_X_OFFSET = 25;
+    const OUTPUT_X_OFFSET = 103;
 
-      // 2. Межпедальные провода (Patch cables)
-      if (index < selectedPedals.length - 1) {
-        const nextPedal = selectedPedals[index + 1];
-        connections.push({
-          from: { x: pedal.position.x + PEDAL_WIDTH, y: pedal.position.y + PEDAL_HEIGHT / 2 },
-          to: { x: nextPedal.position.x, y: nextPedal.position.y + PEDAL_HEIGHT / 2 },
-          type: 'patch'
-        });
-      }
+    manualConnections.forEach((conn) => {
+      const fromPedal = selectedPedals.find((p) => p.id === conn.fromPedalId);
+      const toPedal = selectedPedals.find((p) => p.id === conn.toPedalId);
 
-      // 3. Выходной провод (от последней педали до правого края)
-      if (index === selectedPedals.length - 1) {
+      if (fromPedal && toPedal) {
         connections.push({
-          from: { x: pedal.position.x + PEDAL_WIDTH, y: pedal.position.y + PEDAL_HEIGHT / 2 },
-          to: { x: 2000, y: pedal.position.y + PEDAL_HEIGHT / 2 }, // Запас по ширине
-          type: 'output'
+          id: conn.id,
+          fromPedalId: conn.fromPedalId, // Добавляем для удобства обработки в Cables
+          toPedalId: conn.toPedalId,
+          from: {
+            x: fromPedal.position.x + OUTPUT_X_OFFSET,
+            y: fromPedal.position.y + PORT_Y_OFFSET,
+          },
+          to: {
+            x: toPedal.position.x + INPUT_X_OFFSET,
+            y: toPedal.position.y + PORT_Y_OFFSET,
+          },
+          type: "manual",
         });
       }
     });
 
     return connections;
-  }
+  },
 }));
